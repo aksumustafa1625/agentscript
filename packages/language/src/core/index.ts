@@ -38,6 +38,7 @@ export {
   isAstNodeLike,
   isCollectionFieldType,
   isNamedCollectionFieldType,
+  isGlobalScopeListMember,
   parseCommentNode,
   parseResult,
   leadingComments,
@@ -120,7 +121,14 @@ export type {
   TypedMapOptions,
   FactoryBuilderMethods,
 } from './factory-types.js';
-export type { BlockCapability } from './types.js';
+export type {
+  BlockCapability,
+  CorePrimitiveType,
+  GlobalScopeMember,
+  GlobalScopeMemberDecl,
+  GlobalScopeMemberSpec,
+  GlobalScopeMembers,
+} from './types.js';
 
 export type {
   Expression,
@@ -130,6 +138,7 @@ export type {
   ComparisonOperator,
   TemplatePart,
   TemplatePartKind,
+  AtMemberChain,
 } from './expressions.js';
 
 export {
@@ -139,6 +148,7 @@ export {
   TemplateInterpolation,
   NumberLiteral,
   BooleanLiteral,
+  unwrapPrimitiveLiteral,
   NoneLiteral,
   Identifier,
   AtIdentifier,
@@ -154,8 +164,10 @@ export {
   isTemplatePartKind,
   parseTemplateParts,
   decomposeAtMemberExpression,
+  decomposeAtMemberChain,
   decomposeMemberExpression,
 } from './expressions.js';
+export type { PrimitiveLiteralValue } from './expressions.js';
 
 export type { Statement } from './statements.js';
 

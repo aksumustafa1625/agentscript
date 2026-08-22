@@ -87,10 +87,17 @@ modality voice:
   const fullVoiceSourceV2 = `
 language:
     default_locale: "fr_CA"
-    additional_locales: "de,it"
-
+    additional_locales:
+        - "de"
+        - "it"
 modality voice:
     session_language_switching: "Multilingual"
+
+    language:
+        default_locale: "fr_CA"
+        additional_locales:
+            - "de"
+            - "it"
 
     inbound:
         keywords:
@@ -121,11 +128,8 @@ modality voice:
               phoneme: "ɛlɪkwɪs"
               type: "IPA"
 
-    languages:
-
+    language_settings:
         fr_CA:
-            is_default: True
-
             outbound:
                 model:
                     id: "0VMx123456789ab"
@@ -182,7 +186,9 @@ modality voice:
       expectedPersonaId: undefined,
       expectedSessionLanguageSwitchingKind: undefined,
       expectedSessionLanguageSwitching: undefined,
-      expectedLanguagesIsNamedMap: undefined,
+      expectedLanguageKind: undefined,
+      expectedLanguageDefaultLocale: undefined,
+      expectedLanguageSettingsLength: undefined,
     },
     {
       source: fullVoiceSourceV2,
@@ -219,7 +225,9 @@ modality voice:
       expectedPersonaId: '0VPx123456789ab',
       expectedSessionLanguageSwitchingKind: 'StringLiteral',
       expectedSessionLanguageSwitching: 'Multilingual',
-      expectedLanguagesIsNamedMap: true,
+      expectedLanguageKind: 'LanguageBlock',
+      expectedLanguageDefaultLocale: 'fr_CA',
+      expectedLanguageSettingsLength: 3,
     },
   ])(
     'parses a full voice modality (VoiceSchema $schemaVersion)',
@@ -254,7 +262,9 @@ modality voice:
       expectedPersonaId,
       expectedSessionLanguageSwitchingKind,
       expectedSessionLanguageSwitching,
-      expectedLanguagesIsNamedMap,
+      expectedLanguageKind,
+      expectedLanguageDefaultLocale,
+      expectedLanguageSettingsLength,
     }) => {
       const ast = parseDocument(source);
       const modality = ast.modality!;
@@ -395,10 +405,76 @@ modality voice:
         expectedSessionLanguageSwitching
       );
 
-      const languages = voice.languages as Record<string, unknown> | undefined;
-      expect(languages !== undefined ? isNamedMap(languages) : undefined).toBe(
-        expectedLanguagesIsNamedMap
-      );
+      const language = voice.language as Record<string, unknown> | undefined;
+      expect(language?.__kind).toBe(expectedLanguageKind);
+
+      const defaultLocale = language?.default_locale as
+        | Record<string, unknown>
+        | undefined;
+      expect(defaultLocale?.value).toBe(expectedLanguageDefaultLocale);
+
+      const languageSettings = voice.language_settings as
+        | Record<string, unknown>
+        | undefined;
+      expect(
+        languageSettings !== undefined
+          ? voice.language_settings.size
+          : undefined
+      ).toBe(expectedLanguageSettingsLength);
+    }
+  );
+
+  // Quoted is the canonical locale form (consistent with default_locale) and
+  // round-trips unchanged.
+  it('parses and round-trips a quoted voice.language additional_locales sequence', () => {
+    const source = `modality voice:
+    language:
+        default_locale: "en_US"
+        additional_locales:
+            - "fr"
+            - "de"`;
+    const { value, diagnostics } = parseWithDiagnostics(source);
+    const voice = value.modality?.get('voice');
+    const language = voice?.language as Record<string, unknown> | undefined;
+    const additionalLocales = language?.additional_locales as
+      | SequenceNode
+      | undefined;
+
+    expect(diagnostics).toEqual([]);
+    expect(
+      additionalLocales?.items.map(
+        item => (item as unknown as { value: string }).value
+      )
+    ).toEqual(['fr', 'de']);
+    expect(emitDocument(value)).toBe(source);
+  });
+
+  // YAML-inspired: bare, quoted, and mixed members are all accepted and
+  // normalized to string locales, matching the standalone `language` block.
+  it.each([
+    ['bare', '            - fr\n            - de'],
+    ['mixed', '            - fr\n            - "de"'],
+  ])(
+    'accepts a %s voice.language additional_locales sequence',
+    (_variant, members) => {
+      const source = `modality voice:
+    language:
+        default_locale: "en_US"
+        additional_locales:
+${members}`;
+      const { value, diagnostics } = parseWithDiagnostics(source);
+      const voice = value.modality?.get('voice');
+      const language = voice?.language as Record<string, unknown> | undefined;
+      const additionalLocales = language?.additional_locales as
+        | SequenceNode
+        | undefined;
+
+      expect(diagnostics).toEqual([]);
+      expect(
+        additionalLocales?.items.map(
+          item => (item as unknown as { value: string }).value
+        )
+      ).toEqual(['fr', 'de']);
     }
   );
 
@@ -494,7 +570,8 @@ modality voice:
       expectedSpeakUpConfigDefined: true,
       expectedModelId: undefined,
       expectedPersonaId: undefined,
-      expectedLanguagesIsNamedMap: undefined,
+      expectedLanguageDefaultLocale: undefined,
+      expectedLanguageSettingsLength: undefined,
     },
     {
       schemaVersion: VoiceSchemas.V2,
@@ -506,7 +583,8 @@ modality voice:
       expectedSpeakUpConfigDefined: undefined,
       expectedModelId: 'SalesforceInternal',
       expectedPersonaId: '0VPx123456789ab',
-      expectedLanguagesIsNamedMap: true,
+      expectedLanguageDefaultLocale: 'fr_CA',
+      expectedLanguageSettingsLength: 3,
     },
   ])(
     'emits and re-parses a voice modality (roundtrip) (VoiceSchema $schemaVersion)',
@@ -520,7 +598,8 @@ modality voice:
       expectedSpeakUpConfigDefined,
       expectedModelId,
       expectedPersonaId,
-      expectedLanguagesIsNamedMap,
+      expectedLanguageDefaultLocale,
+      expectedLanguageSettingsLength,
     }) => {
       const ast = parseDocument(source);
       const emitted = emitDocument(ast);
@@ -573,12 +652,20 @@ modality voice:
         expectedSpeakUpConfigDefined
       );
 
-      const languages2 = voice2.languages as
+      const language2 = voice2.language as Record<string, unknown> | undefined;
+      const defaultLocale = language2?.default_locale as
+        | Record<string, unknown>
+        | undefined;
+      expect(defaultLocale?.value).toBe(expectedLanguageDefaultLocale);
+
+      const languageSettings2 = voice2.language_settings as
         | Record<string, unknown>
         | undefined;
       expect(
-        languages2 !== undefined ? isNamedMap(languages2) : undefined
-      ).toBe(expectedLanguagesIsNamedMap);
+        languageSettings2 !== undefined
+          ? voice2.language_settings.size
+          : undefined
+      ).toBe(expectedLanguageSettingsLength);
     }
   );
 });
@@ -633,7 +720,10 @@ modality voice:
     expect((voice.voice_id as Record<string, unknown>).value).toBe('test123');
   });
 
-  it('parses empty voice modality (no fields)', () => {
+  it('recovers an empty voice modality block during parse (lint flags it separately)', () => {
+    // The parser still creates the block for error recovery; the empty-block
+    // lint pass is what raises the error, because a voice entry must carry at
+    // least one property. See lint.test.ts 'modality block requirements'.
     const source = 'modality voice:\n';
     const ast = parseDocument(source);
     const modality = ast.modality!;

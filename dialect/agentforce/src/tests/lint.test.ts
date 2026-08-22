@@ -647,31 +647,19 @@ topic main:
 // ============================================================================
 
 describe('skill target scheme validation', () => {
-  it('allows skill:// target on a subagent skill', () => {
+  it('allows skill:// target on a top-level skill definition', () => {
     const diagnostics = runSecurityLint(`
-subagent skilled:
-  description: "Has a skill"
-  skills:
-    helper:
-      target: "skill://Helper_v1"
-  reasoning:
-    instructions: ->
-      |Do it
-`);
-    const errors = diagnostics.filter(d => d.code === 'invalid-skill-target');
-    expect(errors).toHaveLength(0);
-  });
+skill_definitions:
+  helper:
+    target: "skill://Helper_v1"
 
-  it('allows skill:// target on a start_agent skill', () => {
-    const diagnostics = runSecurityLint(`
-start_agent main:
-  description: "Entry"
-  skills:
-    starter:
-      target: "skill://Starter_v1"
+subagent skilled:
+  description: "References a skill"
   reasoning:
     instructions: ->
       |Do it
+    skills:
+      helper_skill: @skill_definitions.helper
 `);
     const errors = diagnostics.filter(d => d.code === 'invalid-skill-target');
     expect(errors).toHaveLength(0);
@@ -679,11 +667,12 @@ start_agent main:
 
   it('reports error for unsupported skill target scheme', () => {
     const diagnostics = runSecurityLint(`
-subagent skilled:
-  description: "Has a skill"
-  skills:
-    helper:
-      target: "skills://Helper_v1"
+skill_definitions:
+  helper:
+    target: "skills://Helper_v1"
+
+start_agent main:
+  description: "Entry"
   reasoning:
     instructions: ->
       |Do it
@@ -697,11 +686,12 @@ subagent skilled:
 
   it('reports error for skill target without URI scheme', () => {
     const diagnostics = runSecurityLint(`
-subagent skilled:
-  description: "Has a skill"
-  skills:
-    helper:
-      target: "just_a_name"
+skill_definitions:
+  helper:
+    target: "just_a_name"
+
+start_agent main:
+  description: "Entry"
   reasoning:
     instructions: ->
       |Do it
@@ -712,19 +702,138 @@ subagent skilled:
     expect(errors[0].message).toContain('just_a_name');
   });
 
-  it('reports missing-required-field when target is omitted', () => {
-    const diagnostics = runLint(`
-subagent skilled:
-  description: "Missing target"
-  skills:
-    helper: {}
+  it('reports invalid-skill-shape when neither instructions nor target is present', () => {
+    const diagnostics = runSecurityLint(`
+skill_definitions:
+  helper: {}
+
+start_agent main:
+  description: "Entry"
   reasoning:
     instructions: ->
       |Do it
 `);
-    const errors = diagnostics.filter(d => d.code === 'missing-required-field');
-    expect(errors.length).toBeGreaterThanOrEqual(1);
-    expect(errors.some(d => d.message.includes("'target'"))).toBe(true);
+    const errors = diagnostics.filter(d => d.code === 'invalid-skill-shape');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].severity).toBe(DiagnosticSeverity.Error);
+    expect(errors[0].message).toContain("'instructions'");
+    expect(errors[0].message).toContain("'target'");
+  });
+
+  it('reports invalid-skill-shape when both instructions and target are present', () => {
+    const diagnostics = runSecurityLint(`
+skill_definitions:
+  helper:
+    instructions: "# Helper\\nInline body."
+    description: "Helper skill"
+    target: "skill://Helper_v1"
+
+start_agent main:
+  description: "Entry"
+  reasoning:
+    instructions: ->
+      |Do it
+`);
+    const errors = diagnostics.filter(d => d.code === 'invalid-skill-shape');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].severity).toBe(DiagnosticSeverity.Error);
+    expect(errors[0].message).toContain('both');
+  });
+
+  it('allows an inline skill with instructions and description', () => {
+    const diagnostics = runSecurityLint(`
+skill_definitions:
+  helper:
+    instructions: "# Helper\\nInline body."
+    description: "Helper skill"
+
+start_agent main:
+  description: "Entry"
+  reasoning:
+    instructions: ->
+      |Do it
+`);
+    const errors = diagnostics.filter(d => d.code === 'invalid-skill-shape');
+    expect(errors).toHaveLength(0);
+  });
+
+  it('reports invalid-skill-shape when an inline skill omits description', () => {
+    const diagnostics = runSecurityLint(`
+skill_definitions:
+  helper:
+    instructions: "# Helper\\nInline body."
+
+start_agent main:
+  description: "Entry"
+  reasoning:
+    instructions: ->
+      |Do it
+`);
+    const errors = diagnostics.filter(d => d.code === 'invalid-skill-shape');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].severity).toBe(DiagnosticSeverity.Error);
+    expect(errors[0].message).toContain("'description'");
+  });
+
+  it('does not require description on a stored (target) skill', () => {
+    const diagnostics = runSecurityLint(`
+skill_definitions:
+  helper:
+    target: "skill://Helper_v1"
+
+start_agent main:
+  description: "Entry"
+  reasoning:
+    instructions: ->
+      |Do it
+`);
+    const errors = diagnostics.filter(d => d.code === 'invalid-skill-shape');
+    expect(errors).toHaveLength(0);
+  });
+});
+
+// ============================================================================
+// Node-level skill reference resolution (reasoning.skills map)
+// ============================================================================
+
+describe('node-level skill reference resolution', () => {
+  it('accepts reasoning.skills handles bound to declared skill_definitions', () => {
+    const diagnostics = runSecurityLint(`
+skill_definitions:
+  myStoredSkill:
+    target: "skill://Helper_v1"
+
+subagent skilled:
+  description: "References a declared skill by handle"
+  reasoning:
+    instructions: ->
+      |Do it
+    skills:
+      my_stored_skill: @skill_definitions.myStoredSkill
+`);
+    const errors = diagnostics.filter(d => d.code === 'undefined-reference');
+    expect(errors).toHaveLength(0);
+  });
+
+  it('flags a reasoning.skills handle bound to an undeclared skill definition', () => {
+    const diagnostics = runSecurityLint(`
+skill_definitions:
+  myStoredSkill:
+    target: "skill://Helper_v1"
+
+subagent skilled:
+  description: "References a missing skill definition"
+  reasoning:
+    instructions: ->
+      |Do it
+    skills:
+      my_stored_skill: @skill_definitions.myStoredSkill
+      broken: @skill_definitions.doesNotExist
+`);
+    const errors = diagnostics.filter(d => d.code === 'undefined-reference');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].message).toContain('doesNotExist');
+    expect(errors[0].severity).toBe(DiagnosticSeverity.Error);
   });
 });
 
@@ -784,6 +893,71 @@ topic test:
     );
     expect(reqDiags.length).toBeGreaterThanOrEqual(1);
     expect(reqDiags.some(d => d.message.includes("'description'"))).toBe(true);
+  });
+});
+
+// ============================================================================
+// Scalar-value-for-block rules (W-23357477)
+// ============================================================================
+
+describe('block field with scalar value', () => {
+  it('reports an error for a bare scalar in model_config (block position)', () => {
+    // W-23357477: `model_config` with just a bare string (no `model:` key)
+    // used to parse silently with zero diagnostics.
+    const diagnostics = runLint(`
+config:
+  developer_name: "TestAgent"
+model_config:
+  "model://sfdc_ai__DefaultGPT54"
+`);
+    const invalid = diagnostics.filter(d => d.code === 'invalid-block-value');
+    expect(invalid.length).toBeGreaterThanOrEqual(1);
+    expect(invalid[0].message).toContain('model_config');
+    expect(invalid[0].severity).toBe(DiagnosticSeverity.Error);
+  });
+
+  it('reports an error for an inline scalar in model_config', () => {
+    const diagnostics = runLint(`
+config:
+  developer_name: "TestAgent"
+model_config: "model://sfdc_ai__DefaultGPT54"
+`);
+    const invalid = diagnostics.filter(d => d.code === 'invalid-block-value');
+    expect(invalid.length).toBeGreaterThanOrEqual(1);
+    expect(invalid[0].message).toContain('model_config');
+  });
+
+  it('accepts a valid nested model_config block', () => {
+    const diagnostics = runLint(`
+config:
+  developer_name: "TestAgent"
+model_config:
+  model: "model://sfdc_ai__DefaultGPT54"
+`);
+    expect(diagnostics.filter(d => d.code === 'invalid-block-value')).toEqual(
+      []
+    );
+  });
+
+  it('does not flag inline type keywords on response format inputs', () => {
+    // TypeDescriptor reports __fieldKind: 'Block' but legitimately accepts an
+    // inline type keyword (e.g. `type: string`, `value: string`).
+    const diagnostics = runLint(`
+connection messaging:
+  response_formats:
+    constrained_format:
+      target: "apex://Handler"
+      inputs:
+        greeting:
+          type: string
+            min_length: 1
+        tags:
+          type: list
+            value: string
+`);
+    expect(diagnostics.filter(d => d.code === 'invalid-block-value')).toEqual(
+      []
+    );
   });
 });
 
@@ -2617,6 +2791,75 @@ subagent Order_Management:
   expect(warnings.length).toBeGreaterThan(0);
 });
 
+// Regression: W-23774086. `additional_locales` items are locale strings, not
+// free-form expressions. A bare locale (`- en_GB`) is normalized to a string
+// literal, so it must never surface the confusing `'en_GB' is not a defined
+// value` identifier error that blocked agent creation — regardless of whether
+// it is written quoted or bare.
+describe('additional_locales identifier validation', () => {
+  it('does not flag quoted locales as unknown-identifier', () => {
+    const diagnostics = runLint(`
+config:
+    agent_name: "LocaleBot"
+
+language:
+    default_locale: "en_US"
+    additional_locales:
+        - "en_GB"
+        - "fr_FR"
+
+start_agent main:
+    description: "test"
+`);
+    expect(
+      diagnostics.filter(d => d.code === 'unknown-identifier')
+    ).toHaveLength(0);
+    expect(diagnostics.filter(d => d.code === 'type-mismatch')).toHaveLength(0);
+  });
+
+  it('accepts bare locales without the identifier error', () => {
+    const diagnostics = runLint(`
+config:
+    agent_name: "LocaleBot"
+
+language:
+    default_locale: "en_US"
+    additional_locales:
+        - en_GB
+        - fr_FR
+
+start_agent main:
+    description: "test"
+`);
+    // The whole point of the fix: a bare locale is accepted as a string, never
+    // mistaken for an undefined reference and never a hard type-mismatch.
+    expect(
+      diagnostics.filter(d => d.code === 'unknown-identifier')
+    ).toHaveLength(0);
+    expect(diagnostics.filter(d => d.code === 'type-mismatch')).toHaveLength(0);
+  });
+
+  it('does not flag the deprecated comma-string form as unknown-identifier', () => {
+    const diagnostics = runLint(`
+config:
+    agent_name: "LocaleBot"
+
+language:
+    default_locale: "en_US"
+    additional_locales: "en_GB, fr_FR"
+
+start_agent main:
+    description: "test"
+`);
+    // The deprecated form is still parsed (and warned about at parse time); the
+    // key regression is that it must not produce the hard identifier error.
+    // The deprecation warning itself is covered by the dialect round-trip test.
+    expect(
+      diagnostics.filter(d => d.code === 'unknown-identifier')
+    ).toHaveLength(0);
+  });
+});
+
 describe('voice-adaptive conflict rule', () => {
   it('reports warning when language.adaptive is True and modality voice is present', () => {
     const diagnostics = runSecurityLint(`
@@ -2697,6 +2940,145 @@ start_agent main:
   });
 });
 
+describe('modality block requirements', () => {
+  it('reports empty-block for a bare modality collection with no entries', () => {
+    const diagnostics = runSecurityLint(`
+config:
+    agent_name: "BareModalityBot"
+
+modality:
+
+start_agent main:
+    description: "test"
+`);
+    const empties = diagnostics.filter(
+      d => d.code === 'empty-block' && d.message.includes("'modality'")
+    );
+    expect(empties).toHaveLength(1);
+    expect(empties[0].severity).toBe(DiagnosticSeverity.Error);
+  });
+
+  it('reports empty-block for a voice modality entry with no properties', () => {
+    const diagnostics = runSecurityLint(`
+config:
+    agent_name: "EmptyVoiceBot"
+
+modality voice:
+
+start_agent main:
+    description: "test"
+`);
+    const empties = diagnostics.filter(
+      d => d.code === 'empty-block' && d.message.includes("'modality voice'")
+    );
+    expect(empties).toHaveLength(1);
+    expect(empties[0].severity).toBe(DiagnosticSeverity.Error);
+  });
+
+  it('accepts a voice modality with any single property (not just voice_id)', () => {
+    const diagnostics = runSecurityLint(`
+config:
+    agent_name: "VoiceBot"
+
+modality voice:
+    outbound_speed: 1.0
+
+start_agent main:
+    description: "test"
+`);
+    const empties = diagnostics.filter(d => d.code === 'empty-block');
+    expect(empties).toHaveLength(0);
+  });
+
+  it('does not report when the voice block has a voice_id', () => {
+    const diagnostics = runSecurityLint(`
+config:
+    agent_name: "VoiceBot"
+
+modality voice:
+    voice_id: "v_abc"
+
+start_agent main:
+    description: "test"
+`);
+    const empties = diagnostics.filter(d => d.code === 'empty-block');
+    expect(empties).toHaveLength(0);
+  });
+
+  it('does not report when there is no modality block at all', () => {
+    const diagnostics = runSecurityLint(`
+config:
+    agent_name: "PlainBot"
+
+start_agent main:
+    description: "test"
+`);
+    const empties = diagnostics.filter(d => d.code === 'empty-block');
+    expect(empties).toHaveLength(0);
+  });
+});
+
+describe('empty top-level block (empty-block rule)', () => {
+  const EMPTY_BLOCKS = [
+    'system',
+    'variables',
+    'model_config',
+    'knowledge',
+    'connection',
+    'access',
+    'context',
+  ];
+
+  for (const block of EMPTY_BLOCKS) {
+    it(`reports an error for an empty ${block} block`, () => {
+      const diagnostics = runSecurityLint(`
+config:
+    agent_name: "EmptyBlockBot"
+
+${block}:
+
+start_agent main:
+    description: "test"
+`);
+      const empties = diagnostics.filter(
+        d => d.code === 'empty-block' && d.message.includes(`'${block}'`)
+      );
+      expect(empties).toHaveLength(1);
+      expect(empties[0].severity).toBe(DiagnosticSeverity.Error);
+    });
+  }
+
+  it('does not report when a block has content', () => {
+    const diagnostics = runSecurityLint(`
+config:
+    agent_name: "PopulatedBot"
+
+context:
+    memory:
+        enabled: True
+
+start_agent main:
+    description: "test"
+`);
+    const empties = diagnostics.filter(
+      d => d.code === 'empty-block' && d.message.includes("'context'")
+    );
+    expect(empties).toHaveLength(0);
+  });
+
+  it('does not report top-level blocks that are simply absent', () => {
+    const diagnostics = runSecurityLint(`
+config:
+    agent_name: "MinimalBot"
+
+start_agent main:
+    description: "test"
+`);
+    const empties = diagnostics.filter(d => d.code === 'empty-block');
+    expect(empties).toHaveLength(0);
+  });
+});
+
 describe('adaptive-language-overrides rule', () => {
   it('emits one warning per ignored field when adaptive: True is set with other fields', () => {
     const diagnostics = runSecurityLint(`
@@ -2706,7 +3088,9 @@ config:
 language:
     adaptive: True
     default_locale: "en_US"
-    additional_locales: "fr, de"
+    additional_locales:
+      - "fr"
+      - "de"
     all_additional_locales: True
 
 start_agent main:
@@ -2768,7 +3152,9 @@ config:
 
 language:
     default_locale: "en_US"
-    additional_locales: "fr, de"
+    additional_locales:
+      - "fr"
+      - "de"
 
 start_agent main:
     description: "test"
@@ -3079,6 +3465,131 @@ subagent main:
 });
 
 // ============================================================================
+// Variable references inside input default/const values count as usage.
+// Regression: defaults like `count: number = @variables.n` were walked as
+// declarations whose `defaultValue` expression was never visited, so the
+// reference was invisible and the variable was wrongly flagged as unused.
+// ============================================================================
+
+describe('unused-variable: references in input default values', () => {
+  it('does not flag a variable referenced in an action input default', () => {
+    const diagnostics = runSecurityLint(`
+variables:
+  def_count: mutable number = 5
+start_agent main:
+  description: "Main"
+  actions:
+    Do_Thing:
+      description: "Does a thing"
+      inputs:
+        count: number = @variables.def_count
+      target: "flow://Do_Thing"
+  reasoning:
+    instructions: ->
+      |Do something
+`);
+
+    const unused = diagnostics.filter(d => d.code === 'unused-variable');
+    expect(unused).toHaveLength(0);
+  });
+
+  it('does not flag a variable referenced in a response format input default', () => {
+    const diagnostics = runSecurityLint(`
+variables:
+  default_date: mutable date
+connection messaging:
+  response_formats:
+    picker:
+      description: "Pick a date"
+      inputs:
+        selected: date = @variables.default_date
+start_agent main:
+  description: "Main"
+  reasoning:
+    instructions: ->
+      |Do something
+`);
+
+    const unused = diagnostics.filter(d => d.code === 'unused-variable');
+    expect(unused).toHaveLength(0);
+  });
+
+  it('does not flag variables referenced in a list-literal input default', () => {
+    const diagnostics = runSecurityLint(`
+variables:
+  a: mutable string = "a"
+  b: mutable string = "b"
+connection messaging:
+  response_formats:
+    f:
+      description: "d"
+      inputs:
+        refs: list[string] = [@variables.a, @variables.b]
+start_agent main:
+  description: "Main"
+  reasoning:
+    instructions: ->
+      |Do something
+`);
+
+    const unused = diagnostics.filter(d => d.code === 'unused-variable');
+    expect(unused).toHaveLength(0);
+  });
+
+  it('still flags a variable that is only declared, never referenced anywhere', () => {
+    const diagnostics = runSecurityLint(`
+variables:
+  used_default: mutable number = 1
+  truly_unused: mutable number = 2
+start_agent main:
+  description: "Main"
+  actions:
+    Do_Thing:
+      description: "Does a thing"
+      inputs:
+        count: number = @variables.used_default
+      target: "flow://Do_Thing"
+  reasoning:
+    instructions: ->
+      |Do something
+`);
+
+    const unused = diagnostics.filter(d => d.code === 'unused-variable');
+    expect(unused).toHaveLength(1);
+    expect(unused[0].message).toContain("'truly_unused'");
+  });
+
+  it('does not flag variables mapped into connected_subagent bound inputs', () => {
+    // Multi-agent scenario: a connected_subagent maps variables into its
+    // inputs via `= @variables.X`. Those bindings are the only usage of the
+    // variables, so the walker must see them or they'd be flagged unused.
+    const diagnostics = runSecurityLint(`
+variables:
+  user_id: linked string
+    source: @MessagingEndUser.ContactId
+    description: "User contact ID"
+  display_name: mutable string = "Guest"
+    description: "User display name"
+connected_subagent support_agent:
+  target: "agent://Support_Agent"
+  label: "Support Agent"
+  description: "Handles customer support requests"
+  inputs:
+    contact_id: string = @variables.user_id
+    name: string = @variables.display_name
+start_agent main:
+  description: "Main"
+  reasoning:
+    instructions: ->
+      |Do something
+`);
+
+    const unused = diagnostics.filter(d => d.code === 'unused-variable');
+    expect(unused).toHaveLength(0);
+  });
+});
+
+// ============================================================================
 // Bare-identifier validation (identifierValidationPass), exercised end-to-end
 // through the real dialect rules on if / when / available when conditions.
 // ============================================================================
@@ -3136,12 +3647,12 @@ subagent main:
   it('does not double-report with function-callee validation', () => {
     const source = `
 variables:
-  items: mutable string
+  items: mutable list[string] = []
 subagent main:
   description: "Main"
   before_reasoning:
     if len(@variables.items) == 0:
-      set @variables.items = "x"
+      set @variables.items = ["x"]
   reasoning:
     instructions: ->
       |Do something
@@ -3150,34 +3661,136 @@ subagent main:
   });
 });
 
+describe('AgentScript function catalog integration', () => {
+  it('accepts structurally valid json_path calls', () => {
+    const diagnostics = runSecurityLint(`
+variables:
+  data: mutable object = {}
+subagent main:
+  description: "Main"
+  before_reasoning:
+    if json_path(@variables.data, "$[\\"display.name\\"]", "missing") == "visible":
+      set @variables.data = {}
+  reasoning:
+    instructions: ->
+      |Do something
+`);
+    const relevant = diagnostics.filter(d =>
+      [
+        'unknown-function',
+        'function-argument-count',
+        'invalid-jsonpath',
+      ].includes(d.code ?? '')
+    );
+    expect(relevant).toHaveLength(0);
+  });
+
+  it('reports json_path arity errors', () => {
+    const diagnostics = runSecurityLint(`
+variables:
+  data: mutable object = {}
+subagent main:
+  description: "Main"
+  before_reasoning:
+    if json_path(@variables.data) == "visible":
+      set @variables.data = {}
+  reasoning:
+    instructions: ->
+      |Do something
+`);
+    const arityErrors = diagnostics.filter(
+      d => d.code === 'function-argument-count'
+    );
+    expect(arityErrors).toHaveLength(1);
+    expect(arityErrors[0].severity).toBe(DiagnosticSeverity.Error);
+  });
+
+  it('inherits argument-type checking: no warning for json_path on an object', () => {
+    const diagnostics = runSecurityLint(`
+variables:
+  data: mutable object = {}
+subagent main:
+  description: "Main"
+  before_reasoning:
+    if json_path(@variables.data, "$.ready") == "visible":
+      set @variables.data = {}
+  reasoning:
+    instructions: ->
+      |Do something
+`);
+    expect(
+      diagnostics.filter(d => d.code === 'function-argument-type')
+    ).toHaveLength(0);
+  });
+
+  it('inherits argument-type checking: warns for json_path on a scalar', () => {
+    const diagnostics = runSecurityLint(`
+variables:
+  count: mutable number = 0
+subagent main:
+  description: "Main"
+  before_reasoning:
+    if json_path(@variables.count, "$.ready") == "visible":
+      set @variables.count = 1
+  reasoning:
+    instructions: ->
+      |Do something
+`);
+    const typeWarnings = diagnostics.filter(
+      d => d.code === 'function-argument-type'
+    );
+    expect(typeWarnings).toHaveLength(1);
+    expect(typeWarnings[0].severity).toBe(DiagnosticSeverity.Warning);
+    expect(typeWarnings[0].message).toContain("'json_path'");
+    expect(typeWarnings[0].message).toContain('an object or list');
+  });
+
+  it('inherits argument-type checking: warns for len() on a scalar', () => {
+    const diagnostics = runSecurityLint(`
+variables:
+  count: mutable number = 0
+subagent main:
+  description: "Main"
+  before_reasoning:
+    if len(@variables.count) == 0:
+      set @variables.count = 1
+  reasoning:
+    instructions: ->
+      |Do something
+`);
+    const typeWarnings = diagnostics.filter(
+      d => d.code === 'function-argument-type'
+    );
+    expect(typeWarnings).toHaveLength(1);
+    expect(typeWarnings[0].severity).toBe(DiagnosticSeverity.Warning);
+    expect(typeWarnings[0].message).toContain('a list, dict, or string');
+  });
+});
+
 // ============================================================================
 // Voice language validation tests
 // ============================================================================
 
 describe('voice language validation', () => {
-  it('allows voice language keys that match declared locales', () => {
+  it('allows voice languages that match declared text locales', () => {
     const diagnostics = runSecurityLint(`
 language:
   default_locale: "en_US"
-  additional_locales: "fr_CA, de, it"
+  additional_locales:
+    - "fr_CA"
+    - "de"
+    - "it"
 
 config:
   agent_name: "TestAgent"
 
 modality voice:
-  languages:
-    en_US:
-      is_default: True
-    fr_CA:
-      outbound:
-        persona_id: "test123"
-    de:
-      inbound:
-        filler_words_detection: True
-    it:
-      inbound:
-        keywords:
-          - "urgent"
+  language:
+    default_locale: "en_US"
+    additional_locales:
+      - "fr_CA"
+      - "de"
+      - "it"
 
 start_agent main:
   description: "Main"
@@ -3189,22 +3802,21 @@ start_agent main:
     expect(voiceLangErrors).toHaveLength(0);
   });
 
-  it('reports error for voice language key not in declared locales', () => {
+  it('reports error for voice language not in declared text locales', () => {
     const diagnostics = runSecurityLint(`
 language:
   default_locale: "en_US"
-  additional_locales: "fr_CA"
+  additional_locales:
+    - "fr_CA"
 
 config:
   agent_name: "TestAgent"
 
 modality voice:
-  languages:
-    en_US:
-      is_default: True
-    de:
-      inbound:
-        filler_words_detection: True
+  language:
+    default_locale: "en_US"
+    additional_locales:
+      - "de"
 
 start_agent main:
   description: "Main"
@@ -3221,7 +3833,7 @@ start_agent main:
     expect(voiceLangErrors[0].severity).toBe(DiagnosticSeverity.Error);
   });
 
-  it('reports error for multiple invalid voice language keys', () => {
+  it('reports error for multiple invalid voice languages', () => {
     const diagnostics = runSecurityLint(`
 language:
   default_locale: "en_US"
@@ -3230,19 +3842,11 @@ config:
   agent_name: "TestAgent"
 
 modality voice:
-  languages:
-    en_US:
-      is_default: True
-    fr_CA:
-      outbound:
-        persona_id: "test123"
-    de:
-      inbound:
-        filler_words_detection: True
-    it:
-      inbound:
-        keywords:
-          - "urgent"
+  language:
+    default_locale: "fr_CA"
+    additional_locales:
+      - "de"
+      - "it"
 
 start_agent main:
   description: "Main"
@@ -3258,15 +3862,14 @@ start_agent main:
     expect(errorMessages.some(m => m.includes("'it'"))).toBe(true);
   });
 
-  it('warns when voice languages are defined but no language block exists', () => {
+  it('warns when voice languages are defined but no text language block exists', () => {
     const diagnostics = runSecurityLint(`
 config:
   agent_name: "TestAgent"
 
 modality voice:
-  languages:
-    en_US:
-      is_default: True
+  language:
+    default_locale: "en_US"
 
 start_agent main:
   description: "Main"
@@ -3280,19 +3883,56 @@ start_agent main:
     expect(missingLangBlock[0].severity).toBe(DiagnosticSeverity.Warning);
   });
 
-  it('skips validation when all_additional_locales is True', () => {
+  it('handles additional_locales string sequences', () => {
     const diagnostics = runSecurityLint(`
 language:
   default_locale: "en_US"
-  all_additional_locales: True
+  additional_locales:
+    - "fr_CA"
+    - "de"
+    - "it"
 
 config:
   agent_name: "TestAgent"
 
 modality voice:
-  languages:
+  language:
+    default_locale: "fr_CA"
+    additional_locales:
+      - "de"
+      - "it"
+
+start_agent main:
+  description: "Main"
+`);
+
+    const voiceLangErrors = diagnostics.filter(
+      d => d.code === 'voice-language-not-declared'
+    );
+    expect(voiceLangErrors).toHaveLength(0);
+  });
+
+  it('allows language_settings keys that are declared voice languages', () => {
+    const diagnostics = runSecurityLint(`
+language:
+  default_locale: "en_US"
+  additional_locales:
+    - "fr_CA"
+    - "de"
+
+config:
+  agent_name: "TestAgent"
+
+modality voice:
+  language:
+    default_locale: "en_US"
+    additional_locales:
+      - "fr_CA"
+      - "de"
+  language_settings:
     fr_CA:
-      is_default: True
+      outbound:
+        persona_id: "test123"
     de:
       inbound:
         filler_words_detection: True
@@ -3301,68 +3941,106 @@ start_agent main:
   description: "Main"
 `);
 
-    const voiceLangErrors = diagnostics.filter(
-      d => d.code === 'voice-language-not-declared'
+    const settingsErrors = diagnostics.filter(
+      d => d.code === 'voice-language-settings-not-declared'
     );
-    expect(voiceLangErrors).toHaveLength(0);
+    expect(settingsErrors).toHaveLength(0);
   });
 
-  it('skips validation when adaptive language is enabled', () => {
+  it('reports error for language_settings key not in voice languages', () => {
     const diagnostics = runSecurityLint(`
 language:
-  adaptive: True
   default_locale: "en_US"
+  additional_locales:
+    - "fr_CA"
+    - "de"
 
 config:
   agent_name: "TestAgent"
 
 modality voice:
-  languages:
-    fr_CA:
-      is_default: True
-
-start_agent main:
-  description: "Main"
-`);
-
-    const voiceLangErrors = diagnostics.filter(
-      d => d.code === 'voice-language-not-declared'
-    );
-    expect(voiceLangErrors).toHaveLength(0);
-  });
-
-  it('handles comma-separated additional_locales with whitespace', () => {
-    const diagnostics = runSecurityLint(`
-language:
-  default_locale: "en_US"
-  additional_locales: " fr_CA , de,  it  "
-
-config:
-  agent_name: "TestAgent"
-
-modality voice:
-  languages:
-    fr_CA:
-      is_default: True
+  language:
+    default_locale: "en_US"
+    additional_locales:
+      - "fr_CA"
+  language_settings:
     de:
       inbound:
         filler_words_detection: True
-    it:
-      inbound:
-        keywords:
-          - "urgent"
 
 start_agent main:
   description: "Main"
 `);
 
-    const voiceLangErrors = diagnostics.filter(
-      d => d.code === 'voice-language-not-declared'
+    const settingsErrors = diagnostics.filter(
+      d => d.code === 'voice-language-settings-not-declared'
     );
-    expect(voiceLangErrors).toHaveLength(0);
+    expect(settingsErrors).toHaveLength(1);
+    expect(settingsErrors[0].message).toContain("'de'");
+    expect(settingsErrors[0].severity).toBe(DiagnosticSeverity.Error);
   });
 
-  it('does not validate when voice modality has no languages', () => {
+  it('flags all language_settings keys when no voice language block exists', () => {
+    const diagnostics = runSecurityLint(`
+language:
+  default_locale: "en_US"
+  additional_locales:
+    - "fr_CA"
+    - "de"
+
+config:
+  agent_name: "TestAgent"
+
+modality voice:
+  language_settings:
+    fr_CA:
+      outbound:
+        persona_id: "test123"
+    de:
+      inbound:
+        filler_words_detection: True
+
+start_agent main:
+  description: "Main"
+`);
+
+    const settingsErrors = diagnostics.filter(
+      d => d.code === 'voice-language-settings-not-declared'
+    );
+    expect(settingsErrors).toHaveLength(2);
+  });
+
+  it('accepts any language_settings key when voice all_additional_locales is True', () => {
+    const diagnostics = runSecurityLint(`
+language:
+  default_locale: "en_US"
+
+config:
+  agent_name: "TestAgent"
+
+modality voice:
+  language:
+    default_locale: "en_US"
+    all_additional_locales: True
+  language_settings:
+    fr_CA:
+      outbound:
+        persona_id: "test123"
+    de:
+      inbound:
+        filler_words_detection: True
+
+start_agent main:
+  description: "Main"
+`);
+
+    const settingsErrors = diagnostics.filter(
+      d => d.code === 'voice-language-settings-not-declared'
+    );
+    expect(settingsErrors).toHaveLength(0);
+  });
+
+  it('does not validate when voice modality has no language config', () => {
     const diagnostics = runSecurityLint(`
 language:
   default_locale: "en_US"
@@ -3382,8 +4060,12 @@ start_agent main:
     const missingLangBlock = diagnostics.filter(
       d => d.code === 'voice-language-missing-language-block'
     );
+    const settingsErrors = diagnostics.filter(
+      d => d.code === 'voice-language-settings-not-declared'
+    );
     expect(voiceLangErrors).toHaveLength(0);
     expect(missingLangBlock).toHaveLength(0);
+    expect(settingsErrors).toHaveLength(0);
   });
 
   it('does not validate when there is no voice modality', () => {
@@ -3541,9 +4223,8 @@ modality voice:
   inbound:
     keywords:
       - "urgent"
-  languages:
-    en_US:
-      is_default: True
+  language:
+    default_locale: "en_US"
   voice_id: "v123"
 
 start_agent main:
@@ -3555,7 +4236,203 @@ start_agent main:
     );
     expect(mixingErrors).toHaveLength(1);
     expect(mixingErrors[0].message).toContain('inbound');
-    expect(mixingErrors[0].message).toContain('languages');
+    expect(mixingErrors[0].message).toContain('language');
     expect(mixingErrors[0].message).toContain("'voice_id'");
+  });
+});
+
+// ============================================================================
+// render-rule format ownership (S14)
+// ============================================================================
+
+describe('render-rule format ownership', () => {
+  const CONN_MESSAGING = `
+connection messaging:
+    label: "Messaging"
+    response_formats:
+        choices:
+            description: "Multiple choice"
+            source: "response_format://SurfaceAction__MessagingChoices"
+        rich_link:
+            description: "Rich link"
+            source: "response_format://SurfaceAction__MessagingRichLink"
+`;
+
+  const CONN_SLACK = `
+connection slack:
+    label: "Slack"
+    response_formats:
+        blocks:
+            description: "Slack blocks"
+            source: "response_format://SurfaceAction__SlackBlocks"
+`;
+
+  function topicWithRender(renderExpr: string): string {
+    return (
+      CONN_MESSAGING +
+      CONN_SLACK +
+      `
+subagent main:
+  description: "Main"
+  actions:
+    get_list:
+      description: "Get list"
+      target: "flow://get_list"
+  reasoning:
+    instructions: ->
+      |Do it
+    actions:
+      list_it: @actions.get_list
+        when @connection.messaging
+          render: ${renderExpr}
+`
+    );
+  }
+
+  it('accepts shortform ref to a format owned by the connection', () => {
+    const diagnostics = runSecurityLint(
+      topicWithRender('@response_formats.choices')
+    );
+    const errors = diagnostics.filter(
+      d =>
+        d.code === 'render-rule-format-not-in-connection' ||
+        d.code === 'render-rule-format-connection-mismatch' ||
+        d.code === 'render-rule-invalid-format-ref' ||
+        d.code === 'undefined-reference'
+    );
+    expect(errors).toHaveLength(0);
+  });
+
+  it('accepts longform ref to a format owned by the connection', () => {
+    const diagnostics = runSecurityLint(
+      topicWithRender('@connection.messaging.response_formats.choices')
+    );
+    const errors = diagnostics.filter(
+      d =>
+        d.code === 'render-rule-format-not-in-connection' ||
+        d.code === 'render-rule-format-connection-mismatch' ||
+        d.code === 'render-rule-invalid-format-ref' ||
+        d.code === 'undefined-reference'
+    );
+    expect(errors).toHaveLength(0);
+  });
+
+  it('reports render-rule-format-not-in-connection when shortform names a format that belongs to a different connection', () => {
+    // `blocks` is defined on connection `slack`, not on `messaging`.
+    const diagnostics = runSecurityLint(
+      topicWithRender('@response_formats.blocks')
+    );
+    const errors = diagnostics.filter(
+      d => d.code === 'render-rule-format-not-in-connection'
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0].severity).toBe(DiagnosticSeverity.Error);
+    expect(errors[0].message).toContain('blocks');
+    expect(errors[0].message).toContain('messaging');
+  });
+
+  it('reports render-rule-format-not-in-connection when the format does not exist on any connection', () => {
+    const diagnostics = runSecurityLint(
+      topicWithRender('@response_formats.unknown')
+    );
+    const errors = diagnostics.filter(
+      d => d.code === 'render-rule-format-not-in-connection'
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0].severity).toBe(DiagnosticSeverity.Error);
+  });
+
+  it('reports render-rule-format-connection-mismatch when longform names a different connection', () => {
+    const diagnostics = runSecurityLint(
+      topicWithRender('@connection.slack.response_formats.blocks')
+    );
+    const errors = diagnostics.filter(
+      d => d.code === 'render-rule-format-connection-mismatch'
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0].severity).toBe(DiagnosticSeverity.Error);
+    expect(errors[0].message).toContain('blocks');
+    expect(errors[0].message).toContain('messaging');
+  });
+
+  it('built-in @response_formats.json bypasses ownership check', () => {
+    const diagnostics = runSecurityLint(
+      topicWithRender('@response_formats.json')
+    );
+    const errors = diagnostics.filter(
+      d =>
+        d.code === 'render-rule-format-not-in-connection' ||
+        d.code === 'render-rule-format-connection-mismatch' ||
+        d.code === 'render-rule-invalid-format-ref' ||
+        d.code === 'undefined-reference'
+    );
+    expect(errors).toHaveLength(0);
+  });
+
+  it('does not emit undefined-reference on @response_formats.<name> render targets', () => {
+    // Regression: `response_formats` is a scoped namespace on
+    // ResponseFormatBlock, so `@response_formats.choices` would trigger the
+    // `non-referenceable-scope` diagnostic under undefinedReferencePass.
+    // `renderTargetExemptionPass` must pre-mark render values so this
+    // spurious diagnostic never surfaces.
+    for (const expr of [
+      '@response_formats.choices',
+      '@response_formats.json',
+      '@connection.messaging.response_formats.choices',
+    ]) {
+      const diagnostics = runSecurityLint(topicWithRender(expr));
+      const undefRefs = diagnostics.filter(
+        d => d.code === 'undefined-reference'
+      );
+      expect(undefRefs, `expected no undefined-reference for ${expr}`).toEqual(
+        []
+      );
+    }
+  });
+
+  it('reports render-rule-format-not-in-connection when longform matches enclosing connection but names a format owned by a different connection', () => {
+    // `blocks` is declared on `slack`, not `messaging`. The longform ref
+    // targets `messaging`, so the connection-mismatch guard passes — the
+    // ownership check must catch it.
+    const diagnostics = runSecurityLint(
+      topicWithRender('@connection.messaging.response_formats.blocks')
+    );
+    const notInConn = diagnostics.filter(
+      d => d.code === 'render-rule-format-not-in-connection'
+    );
+    const mismatch = diagnostics.filter(
+      d => d.code === 'render-rule-format-connection-mismatch'
+    );
+    expect(notInConn).toHaveLength(1);
+    expect(notInConn[0].severity).toBe(DiagnosticSeverity.Error);
+    expect(mismatch).toHaveLength(0);
+  });
+
+  it('names the concrete first-declared format in the empty-when hint', () => {
+    // Empty `when @connection.messaging` — the hint should call out the
+    // exact format the compiler will fall back to ('choices' is the first
+    // format declared in CONN_MESSAGING).
+    const source =
+      CONN_MESSAGING +
+      CONN_SLACK +
+      `
+subagent main:
+  description: "Main"
+  actions:
+    get_list:
+      description: "Get list"
+      target: "flow://get_list"
+  reasoning:
+    instructions: ->
+      |Do it
+    actions:
+      list_it: @actions.get_list
+        when @connection.messaging
+`;
+    const diagnostics = runSecurityLint(source);
+    const errors = diagnostics.filter(d => d.code === 'render-rule-empty-when');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].severity).toBe(DiagnosticSeverity.Error);
+    expect(errors[0].message).toContain("requires a 'render:' clause");
   });
 });

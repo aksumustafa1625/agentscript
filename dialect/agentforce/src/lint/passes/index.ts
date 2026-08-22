@@ -57,11 +57,12 @@ export { variableValidationRule } from './variable-validation.js';
 export { complexDataTypeWarningRule } from './complex-data-type.js';
 export { customSubagentValidationRule } from './custom-subagent-validation.js';
 export { adaptiveLanguageValidationRule } from './adaptive-language-validation.js';
-export { disabledAdditionalParametersRule } from './disabled-additional-parameters.js';
+export { governedAdditionalParametersRule } from './governed-additional-parameters.js';
 export {
   voiceLanguageValidationRule,
   voiceVersionMixingRule,
 } from './voice-language-validation.js';
+export { emptyBlockRule } from './empty-block.js';
 
 import { actionTargetSchemeRule } from './action-target.js';
 import { skillTargetSchemeRule } from './skill-target.js';
@@ -81,11 +82,12 @@ import { variableValidationRule } from './variable-validation.js';
 import { complexDataTypeWarningRule } from './complex-data-type.js';
 import { customSubagentValidationRule } from './custom-subagent-validation.js';
 import { adaptiveLanguageValidationRule } from './adaptive-language-validation.js';
-import { disabledAdditionalParametersRule } from './disabled-additional-parameters.js';
+import { governedAdditionalParametersRule } from './governed-additional-parameters.js';
 import {
   voiceLanguageValidationRule,
   voiceVersionMixingRule,
 } from './voice-language-validation.js';
+import { emptyBlockRule } from './empty-block.js';
 
 /** All Agentforce lint rules — extends AgentScript rules with security checks. */
 export function defaultRules(): LintPass[] {
@@ -117,8 +119,9 @@ export function defaultRules(): LintPass[] {
     complexDataTypeWarningRule(),
     customSubagentValidationRule(),
     adaptiveLanguageValidationRule(),
-    disabledAdditionalParametersRule(),
+    governedAdditionalParametersRule(),
     voiceLanguageValidationRule(),
     voiceVersionMixingRule(),
+    emptyBlockRule(),
   ];
 }
